@@ -1,0 +1,31 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: chrono-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: chrono
+      POSTGRES_PASSWORD: chrono_password
+      POSTGRES_DB: chrono
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n
+    container_name: chrono-n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      FASTAPI_DRIVE_EVENTS_URL: "${FASTAPI_DRIVE_EVENTS_URL}"
+      FASTAPI_DRIVE_CONTENT_URL: "${FASTAPI_DRIVE_CONTENT_URL}"
+      N8N_WEBHOOK_SECRET: "${N8N_WEBHOOK_SECRET}"
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+    volumes:
+      - n8n_data:/home/node/.n8n
+
+volumes:
+  postgres_data:
+  n8n_data:

@@ -1,0 +1,196 @@
+{
+  "name": "Google Drive complete change sync to Chrono FastAPI",
+  "nodes": [
+    {
+      "parameters": { "rule": { "interval": [{ "field": "minutes", "minutesInterval": 1 }] } },
+      "id": "schedule-trigger",
+      "name": "Every minute",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-920, 80]
+    },
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Run manually",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-920, 260]
+    },
+    {
+      "parameters": {
+        "jsCode": "const state = $getWorkflowStaticData('global');\nreturn [{ json: { pageToken: state.pageToken || null } }];"
+      },
+      "id": "read-cursor",
+      "name": "Read saved Drive cursor",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-680, 160]
+    },
+    {
+      "parameters": {
+        "conditions": { "options": { "caseSensitive": true, "typeValidation": "strict" }, "conditions": [{ "leftValue": "={{ $json.pageToken }}", "operator": { "type": "string", "operation": "notEmpty", "singleValue": true } }], "combinator": "and" },
+        "options": {}
+      },
+      "id": "has-cursor",
+      "name": "Already initialized?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-450, 160]
+    },
+    {
+      "parameters": {
+        "url": "https://www.googleapis.com/drive/v3/changes/startPageToken",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": { "parameters": [{ "name": "supportsAllDrives", "value": "true" }] },
+        "options": {}
+      },
+      "id": "start-token",
+      "name": "Get initial page token",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-180, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const state = $getWorkflowStaticData('global');\nstate.pageToken = $json.startPageToken;\nstate.files = state.files || {};\nreturn [{ json: { initialized: true, pageToken: state.pageToken, note: 'Cursor saved. Future Drive changes will be delivered.' } }];"
+      },
+      "id": "save-start-token",
+      "name": "Save initial cursor",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [80, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://www.googleapis.com/drive/v3/changes",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": { "parameters": [
+          { "name": "pageToken", "value": "={{ $json.pageToken }}" },
+          { "name": "pageSize", "value": "1000" },
+          { "name": "spaces", "value": "drive" },
+          { "name": "includeRemoved", "value": "true" },
+          { "name": "includeItemsFromAllDrives", "value": "true" },
+          { "name": "supportsAllDrives", "value": "true" },
+          { "name": "fields", "value": "nextPageToken,newStartPageToken,changes(kind,removed,fileId,driveId,changeType,file(id,name,mimeType,createdTime,modifiedTime,trashed,parents,webViewLink,owners(displayName,emailAddress),size,md5Checksum,description,starred,shared,version,originalFilename,properties,appProperties))" }
+        ] },
+        "options": { "timeout": 30000 }
+      },
+      "id": "list-changes",
+      "name": "Get Drive changes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-180, 40]
+    },
+    {
+      "parameters": {
+        "jsCode": "const state = $getWorkflowStaticData('global');\nstate.files = state.files || {};\nconst inputToken = state.pageToken;\nconst response = $json;\nconst changes = response.changes || [];\nconst now = new Date().toISOString();\nconst events = [];\nfor (let i = 0; i < changes.length; i++) {\n  const change = changes[i];\n  const file = change.file || {};\n  const id = change.fileId || file.id;\n  if (!id) continue;\n  const previous = state.files[id] || null;\n  const parents = file.parents || [];\n  const previousParents = previous?.parents || [];\n  let eventType;\n  if (change.removed) eventType = 'deleted';\n  else if (file.trashed && !previous?.trashed) eventType = 'trashed';\n  else if (!file.trashed && previous?.trashed) eventType = 'restored';\n  else if (previous && JSON.stringify([...parents].sort()) !== JSON.stringify([...previousParents].sort())) eventType = 'moved';\n  else if (!previous && file.createdTime && file.modifiedTime && Math.abs(Date.parse(file.modifiedTime) - Date.parse(file.createdTime)) < 120000) eventType = 'created';\n  else eventType = 'modified';\n  const occurredAt = file.modifiedTime || now;\n  events.push({ json: {\n    source: 'google_drive',\n    drive_id: change.driveId || 'my-drive',\n    change_id: `${inputToken}:${i}:${id}`,\n    event_type: eventType,\n    file_id: id,\n    name: file.name || previous?.name || null,\n    mime_type: file.mimeType || previous?.mimeType || null,\n    is_folder: (file.mimeType || previous?.mimeType) === 'application/vnd.google-apps.folder',\n    removed: Boolean(change.removed),\n    occurred_at: occurredAt,\n    parents,\n    previous_parents: previousParents,\n    web_view_link: file.webViewLink || null,\n    owners: file.owners || [],\n    raw_change: change\n  } });\n  if (change.removed) delete state.files[id];\n  else state.files[id] = { name: file.name, mimeType: file.mimeType, parents, trashed: Boolean(file.trashed) };\n}\nstate.pageToken = response.nextPageToken || response.newStartPageToken || state.pageToken;\nreturn events;"
+      },
+      "id": "normalize-events",
+      "name": "Classify and normalize events",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [90, 40]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.FASTAPI_DRIVE_EVENTS_URL }}",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [
+          { "name": "Content-Type", "value": "application/json" },
+          { "name": "X-N8N-Secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" }
+        ] },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify($json) }}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "send-fastapi",
+      "name": "Send JSON to FastAPI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [370, 40]
+    }
+    ,
+    {
+      "parameters": {
+        "jsCode": "return $input.all().filter(item => !item.json.is_folder && !item.json.removed && ['created', 'modified', 'restored'].includes(item.json.event_type));"
+      },
+      "id": "indexable-files",
+      "name": "Only files needing content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [370, 220]
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "operation": "download",
+        "fileId": { "__rl": true, "value": "={{ $json.file_id }}", "mode": "id" },
+        "options": {
+          "googleFileConversion": {
+            "conversion": {
+              "docsToFormat": "text/plain",
+              "sheetsToFormat": "text/csv",
+              "slidesToFormat": "application/pdf"
+            }
+          }
+        }
+      },
+      "id": "download-file",
+      "name": "Download or export file",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [640, 220]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.FASTAPI_DRIVE_CONTENT_URL }}",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "X-N8N-Secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" }] },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": { "parameters": [
+          { "name": "event_json", "value": "={{ JSON.stringify($('Only files needing content').item.json) }}" },
+          { "parameterType": "formBinaryData", "name": "file", "inputDataFieldName": "data" }
+        ] },
+        "options": { "timeout": 120000 }
+      },
+      "id": "send-content",
+      "name": "Send file content to FastAPI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 220]
+    }
+  ],
+  "connections": {
+    "Every minute": { "main": [[{ "node": "Read saved Drive cursor", "type": "main", "index": 0 }]] },
+    "Run manually": { "main": [[{ "node": "Read saved Drive cursor", "type": "main", "index": 0 }]] },
+    "Read saved Drive cursor": { "main": [[{ "node": "Already initialized?", "type": "main", "index": 0 }]] },
+    "Already initialized?": { "main": [
+      [{ "node": "Get Drive changes", "type": "main", "index": 0 }],
+      [{ "node": "Get initial page token", "type": "main", "index": 0 }]
+    ] },
+    "Get initial page token": { "main": [[{ "node": "Save initial cursor", "type": "main", "index": 0 }]] },
+    "Get Drive changes": { "main": [[{ "node": "Classify and normalize events", "type": "main", "index": 0 }]] },
+    "Classify and normalize events": { "main": [[
+      { "node": "Send JSON to FastAPI", "type": "main", "index": 0 },
+      { "node": "Only files needing content", "type": "main", "index": 0 }
+    ]] },
+    "Only files needing content": { "main": [[{ "node": "Download or export file", "type": "main", "index": 0 }]] },
+    "Download or export file": { "main": [[{ "node": "Send file content to FastAPI", "type": "main", "index": 0 }]] }
+  },
+  "pinData": {},
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true },
+  "active": false,
+  "versionId": "782ac5a5-20b7-47bd-88bb-49f9a28af41a",
+  "meta": { "templateCredsSetupCompleted": false },
+  "tags": []
+}

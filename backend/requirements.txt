@@ -1,0 +1,15 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+psycopg[binary]
+pgvector
+pydantic-settings
+python-dotenv
+python-multipart
+pypdf
+python-docx
+openai
+tiktoken
+google-genai
+google-auth
+PyJWT

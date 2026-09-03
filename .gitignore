@@ -1,0 +1,79 @@
+# Chrono repository-wide ignore rules
+
+# Secrets and local environment overrides
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Python
+**/__pycache__/
+**/*.py[cod]
+**/.venv/
+**/venv/
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.coverage
+**/.coverage.*
+**/htmlcov/
+**/*.egg-info/
+
+# Node and frontend build output
+**/node_modules/
+.pnpm-store/
+**/dist/
+**/dist-ssr/
+**/.vite/
+**/.vite-temp/
+**/coverage/
+**/test-results/
+**/playwright-report/
+
+# Local data and database backups
+*.db
+*.sqlite
+*.sqlite3
+*.dump
+*.backup
+*_before_*.sql
+postgres-data/
+n8n-data/
+.n8n/
+
+# Generated project artifacts
+artifacts/
+uploads/
+tmp/
+temp/
+
+# Logs and process files
+*.log
+logs/
+*.pid
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Docker and local deployment overrides
+docker-compose.override.yml
+compose.override.yml
+
+# IDE, OS, and local agent state
+.vscode/
+.idea/
+.codex/
+.agents/
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+*~

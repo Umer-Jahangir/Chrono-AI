@@ -1,0 +1,121 @@
+{
+  "name": "Google Drive one-time baseline and content import",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual",
+      "name": "Run initial import once",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-700, 120]
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "operation": "search",
+        "searchMethod": "query",
+        "queryString": "trashed = false",
+        "returnAll": true,
+        "filter": { "whatToSearch": "all", "includeTrashed": false },
+        "options": { "fields": ["*"] }
+      },
+      "id": "search-all",
+      "name": "List every current Drive item",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [-460, 120]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map((item, index) => { const f = item.json; return { json: { source: 'google_drive', drive_id: f.driveId || 'my-drive', change_id: `baseline:${f.id}:${f.modifiedTime || index}`, event_type: 'created', file_id: f.id, name: f.name || null, mime_type: f.mimeType || null, is_folder: f.mimeType === 'application/vnd.google-apps.folder', removed: false, occurred_at: f.modifiedTime || f.createdTime || new Date().toISOString(), parents: f.parents || [], previous_parents: [], web_view_link: f.webViewLink || null, owners: f.owners || [], raw_change: { baseline: true, file: f } }, pairedItem: { item: index } }; });"
+      },
+      "id": "normalize",
+      "name": "Create baseline events",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-210, 120]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.FASTAPI_DRIVE_EVENTS_URL }}",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [
+          { "name": "Content-Type", "value": "application/json" },
+          { "name": "X-N8N-Secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" }
+        ] },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify($json) }}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "send-metadata",
+      "name": "Store baseline metadata",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [60, 20]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().filter(item => !item.json.is_folder);"
+      },
+      "id": "files-only",
+      "name": "Only downloadable files",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [60, 220]
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "operation": "download",
+        "fileId": { "__rl": true, "value": "={{ $json.file_id }}", "mode": "id" },
+        "options": { "googleFileConversion": { "conversion": {
+          "docsToFormat": "text/plain", "sheetsToFormat": "text/csv", "slidesToFormat": "application/pdf"
+        } } }
+      },
+      "id": "download",
+      "name": "Download or export current file",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [330, 220]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.FASTAPI_DRIVE_CONTENT_URL }}",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "X-N8N-Secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" }] },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": { "parameters": [
+          { "name": "event_json", "value": "={{ JSON.stringify($json) }}" },
+          { "parameterType": "formBinaryData", "name": "file", "inputDataFieldName": "data" }
+        ] },
+        "options": { "timeout": 120000 }
+      },
+      "id": "send-content",
+      "name": "Index current file content",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [600, 220]
+    }
+  ],
+  "connections": {
+    "Run initial import once": { "main": [[{ "node": "List every current Drive item", "type": "main", "index": 0 }]] },
+    "List every current Drive item": { "main": [[{ "node": "Create baseline events", "type": "main", "index": 0 }]] },
+    "Create baseline events": { "main": [[
+      { "node": "Store baseline metadata", "type": "main", "index": 0 },
+      { "node": "Only downloadable files", "type": "main", "index": 0 }
+    ]] },
+    "Only downloadable files": { "main": [[{ "node": "Download or export current file", "type": "main", "index": 0 }]] },
+    "Download or export current file": { "main": [[{ "node": "Index current file content", "type": "main", "index": 0 }]] }
+  },
+  "pinData": {},
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true },
+  "active": false,
+  "versionId": "c63ccac9-2ceb-4a06-8f29-2a1f955042f7",
+  "meta": { "templateCredsSetupCompleted": false },
+  "tags": []
+}
