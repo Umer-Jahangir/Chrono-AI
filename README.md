@@ -10,6 +10,41 @@ metadata filters, extractive answers, citations, dashboards, and timelines remai
 available. Gemini is the primary optional provider for embeddings and answer
 generation, with OpenAI as an optional fallback.
 
+## Why Chrono
+
+People accumulate useful knowledge across files but struggle to rediscover what
+they saved, when it changed, and why it matters. Chrono turns Google Drive into
+an authenticated memory timeline that supports natural questions, structured
+file discovery, change history, and citation-grounded answers.
+
+## Who Chrono is for
+
+Chrono is designed for people whose working knowledge lives in Drive—students,
+researchers, builders, and independent professionals—who need to find both
+current documents and the history behind them without exposing one user’s
+memories to another.
+
+## Solution, impact, and innovation
+
+### Solution
+
+Chrono combines a resumable Google Drive change feed, immutable event history,
+content extraction, structured natural-language planning, and grounded retrieval
+behind one authenticated interface.
+
+### Impact
+
+Users can spend less time reconstructing filenames, dates, and folder locations;
+they can search by meaning or metadata, open the original Drive file, and inspect
+the evidence used for an answer.
+
+### Innovation
+
+Chrono treats memory as both content and time. It combines deterministic schema-
+aware queries with lexical and semantic retrieval, preserves source citations,
+and continues to provide useful search when no external AI provider is
+configured.
+
 ## Architecture
 
 ```text
@@ -32,16 +67,29 @@ Google Drive
 
 - Google Identity Services login with server-side ID-token verification.
 - Short-lived Chrono JWT sessions and owner-scoped API access.
-- Complete Drive lifecycle handling: create, modify, rename, move, trash,
-  restore, and permanent delete.
+- Drive lifecycle handling for creation, modification—including renames—moves,
+  trash, restore, and permanent deletion.
 - One-time Drive baseline import plus resumable Changes API synchronization.
-- Text extraction and chunking for PDF, DOCX, Google Workspace exports, and
-  common text formats.
+- Text extraction and chunking for PDF, DOCX, JSON, CSV, and text-based files;
+  downloadable Google Workspace files are exported by the n8n Drive node first.
 - PostgreSQL full-text search and pgvector semantic retrieval.
 - Hybrid metadata + lexical + semantic ranking.
 - Citation-grounded `/ask` responses with a conservative no-evidence fallback.
 - Dynamic activity dashboard, current timeline, and immutable event history.
-- Sanitized public responses, privacy-safe excerpts, and validated Drive links.
+- Sanitized authenticated API responses, privacy-safe excerpts, and validated
+  Drive links.
+
+## Demo flow
+
+```text
+Sign in with Google
+→ view real Drive activity
+→ find files using natural dates and metadata
+→ open the original Drive file
+→ ask a semantic content question
+→ receive a citation-grounded answer
+→ inspect immutable change history
+```
 
 ## Repository layout
 
@@ -74,8 +122,8 @@ Chrono/
 
 ## Prerequisites
 
-- Python 3.11 or newer
-- Node.js 20 or newer with npm
+- Python 3.10 or newer; the current environment is verified on Python 3.12
+- Node.js `^20.19.0` or `>=22.12.0`, as required by the locked Vite 8 release
 - Docker Desktop or Docker Engine with Compose
 - A Google Cloud project with the Drive API enabled
 - A Google OAuth Web client for browser login
@@ -101,23 +149,27 @@ On Linux or macOS, activate the environment with:
 source .venv/bin/activate
 ```
 
-The example `DATABASE_URL` already matches the local password in
-`docker-compose.yml`. For local development, set the authentication and webhook
-secrets before starting the application:
+Set one local PostgreSQL password consistently in both `POSTGRES_PASSWORD` and
+`DATABASE_URL`, then configure the authentication and webhook values:
 
 ```dotenv
-DATABASE_URL=postgresql+psycopg://chrono:chrono_password@localhost:5432/chrono
+POSTGRES_USER=chrono
+POSTGRES_PASSWORD=replace-with-a-strong-local-password
+POSTGRES_DB=chrono
+DATABASE_URL=postgresql+psycopg://chrono:replace-with-a-strong-local-password@localhost:5432/chrono
 APP_TIMEZONE=Asia/Karachi
 N8N_WEBHOOK_SECRET=replace-with-a-long-random-value
 GOOGLE_AUTH_CLIENT_ID=your-web-client-id.apps.googleusercontent.com
 CHRONO_JWT_SECRET=replace-with-at-least-32-random-characters
+CHRONO_N8N_OWNER_USER_ID=your-internal-chrono-user-uuid
 FRONTEND_ORIGINS=http://localhost:5173
 ```
 
 Never commit `.env`. Do not put the Google client secret, Drive refresh token,
 JWT secret, n8n secret, database password, or AI provider key in frontend files.
-For production, replace the Compose PostgreSQL password and `DATABASE_URL`
-together; the checked-in password is intended only for local development.
+The Compose file retains its previous password only as a backward-compatible
+local fallback for existing developer databases. New setups should copy
+`.env.example` and set `POSTGRES_PASSWORD`; production must always override it.
 
 ### 2. Start PostgreSQL and n8n
 
@@ -139,7 +191,7 @@ PostgreSQL is available at `localhost:5432`; n8n is available at
 
 - API root: <http://localhost:8000>
 - OpenAPI/Swagger: <http://localhost:8000/docs>
-- Health response: `GET /`
+- API status response: `GET /` (there is no separate `/health` route)
 
 At startup, Chrono enables the pgvector extension and creates compatible tables
 for a new database. For an existing pre-authentication database, follow the
@@ -151,7 +203,7 @@ additive migration and ownership instructions in
 ```powershell
 cd ..\frontend
 Copy-Item .env.example .env.local
-npm install
+npm ci
 npm run dev
 ```
 
@@ -165,6 +217,12 @@ VITE_GOOGLE_CLIENT_ID=your-web-client-id.apps.googleusercontent.com
 Open <http://localhost:5173>. Add that exact origin, without a trailing slash,
 to the OAuth client’s authorized JavaScript origins. The same client ID must be
 configured in the backend so FastAPI can verify the ID-token audience.
+
+When the Google OAuth consent screen is in **Testing** mode, add every Gmail
+account that will test Chrono under **OAuth consent screen → Test users**. Chrono
+login should request only basic identity scopes such as `openid`, `email`, and
+`profile`. Google Drive authorization is separate and is currently handled by
+the n8n Google Drive OAuth credential.
 
 ## Google authentication and ownership
 
@@ -183,6 +241,13 @@ session. The current n8n setup synchronizes one personal Drive and maps it to th
 server-side `CHRONO_N8N_OWNER_USER_ID` value. Existing data must only be claimed
 after a database backup and a successful `--dry-run` review. See the detailed
 runbook before applying that operation.
+
+`CHRONO_N8N_OWNER_USER_ID` is Chrono’s internal authenticated-user UUID. It is
+available after that user signs in with Google once, must identify an active row
+in the `users` table, and assigns future single-user n8n Drive events to that
+user. It is server-only and must never appear in frontend configuration. Full
+multi-user Drive synchronization requires owned connection records and per-user
+credentials/cursors rather than one environment value.
 
 ## Google Drive synchronization
 
@@ -215,10 +280,15 @@ Optional Gemini configuration:
 
 ```dotenv
 GEMINI_API_KEY=
-GEMINI_CHAT_MODEL=
+GEMINI_CHAT_MODEL=your-supported-gemini-chat-model
 GEMINI_EMBEDDING_MODEL=gemini-embedding-001
 GEMINI_EMBEDDING_DIMENSIONS=1536
 ```
+
+No Gemini chat model is hardcoded or verified by the implementation. Set
+`GEMINI_CHAT_MODEL` to a generate-content model available to your Google AI
+project. Leaving either the key or chat model unconfigured disables Gemini
+answer generation without disabling lexical search.
 
 Optional OpenAI fallback configuration:
 
@@ -253,7 +323,8 @@ user-facing endpoints require `Authorization: Bearer <Chrono token>`.
 | --- | --- | --- |
 | `POST` | `/auth/google` | Exchange a Google ID token for a Chrono session |
 | `GET` | `/auth/me` | Return the sanitized authenticated user |
-| `GET` | `/dashboard/summary` | Bounded activity aggregation and recent events |
+| `GET` | `/dashboard/summary` | Activity for `this_week`, `last_7_days`, or `last_30_days` |
+| `POST` | `/memories` | Create an authenticated owner-scoped memory |
 | `GET` | `/memories` | Current owner-scoped synchronized items |
 | `GET` | `/timeline` | Current-memory timeline |
 | `GET` | `/timeline/history` | Immutable Drive event history |
@@ -283,8 +354,8 @@ Content-Type: application/json
 
 - Search, timeline, dashboard, and citation responses omit internal IDs and raw
   Drive metadata.
-- Public excerpts and answers redact common phone numbers, email addresses, and
-  obvious credentials without modifying stored chunks.
+- API excerpts and generated answers redact common phone numbers, email
+  addresses, and obvious credentials without modifying stored chunks.
 - `open_url` is returned only for credential-free HTTPS URLs whose exact host is
   `drive.google.com` or `docs.google.com`.
 - AI Markdown is rendered without arbitrary raw HTML and is sanitized before
@@ -332,6 +403,39 @@ sign into a real Google account or call an AI provider.
 - Prefer Secure, HttpOnly, SameSite session cookies and a strict Content Security
   Policy for a hardened production release.
 
+## Before making the repository public
+
+Run a filename and history audit without displaying secret contents:
+
+```powershell
+git status
+git ls-files | Select-String -Pattern '\.env|\.dump'
+git log --all --oneline -- .env .env.local
+git log --all --oneline -- 'backend/.env' 'frontend/.env.local'
+```
+
+The repository ignore rules must continue to include:
+
+```gitignore
+.env
+.env.*
+!.env.example
+*.dump
+```
+
+Chrono intentionally uses a targeted `*_before_*.sql` rule for SQL backup files
+instead of ignoring every `*.sql` file; future schema or migration SQL may be
+source code that should be reviewed and committed.
+
+- `.env.example` files must contain placeholders only.
+- Database dumps must not be committed.
+- API keys, OAuth secrets, JWT secrets, n8n secrets, and passwords must not be
+  committed.
+- If a real secret was ever committed, rotate or revoke it immediately. Deleting
+  the current file does not remove it from Git history.
+- Review history before making the repository public; do not rewrite history or
+  rotate credentials automatically without an explicit recovery plan.
+
 ## Troubleshooting
 
 - **Login button missing:** confirm `VITE_GOOGLE_CLIENT_ID`, the authorized
@@ -357,5 +461,4 @@ multi-user Drive architecture should add encrypted per-user refresh-token
 storage, connection records, per-user cursors, revocation handling, and isolated
 workers.
 
-No license has been declared for this repository. Add a `LICENSE` file before
-distributing the project publicly.
+Chrono is distributed under the MIT License. See [`LICENSE`](LICENSE).

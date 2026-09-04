@@ -4,9 +4,11 @@ services:
     container_name: chrono-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: chrono
-      POSTGRES_PASSWORD: chrono_password
-      POSTGRES_DB: chrono
+      POSTGRES_USER: "${POSTGRES_USER:-chrono}"
+      # The fallback preserves existing local databases. Set POSTGRES_PASSWORD
+      # explicitly for every new or non-local deployment.
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-chrono_password}"
+      POSTGRES_DB: "${POSTGRES_DB:-chrono}"
     ports:
       - "5432:5432"
     volumes:

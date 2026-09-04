@@ -3,7 +3,7 @@
 Chrono uses two n8n workflows:
 
 1. `google-drive-initial-import.json` scans every current Drive file and folder once, stores the metadata baseline, and indexes supported content.
-2. `google-drive-complete-sync.json` watches the Drive Changes API every minute and applies creates, edits, moves, renames, trash, restore, and permanent deletion.
+2. `google-drive-complete-sync.json` polls the Drive Changes API every minute and applies creation, modification (including renames), move, trash, restore, and permanent-deletion events.
 
 Run the baseline before the live workflow. It lets Chrono compare old and new parent IDs so the first move of an existing item is classified correctly.
 
@@ -34,7 +34,7 @@ CHRONO_JWT_SECRET=replace-with-at-least-32-random-secret-characters
 CHRONO_JWT_ALGORITHM=HS256
 CHRONO_ACCESS_TOKEN_MINUTES=60
 ALLOW_LEGACY_DEFAULT_USER=false
-CHRONO_N8N_OWNER_USER_ID=
+CHRONO_N8N_OWNER_USER_ID=your-internal-chrono-user-uuid
 FRONTEND_ORIGINS=http://localhost:5173
 ```
 
@@ -181,7 +181,7 @@ choose the chat model available to your account:
 
 ```dotenv
 GEMINI_API_KEY=your-key
-GEMINI_CHAT_MODEL=your-gemini-chat-model
+GEMINI_CHAT_MODEL=your-supported-gemini-chat-model
 GEMINI_EMBEDDING_MODEL=gemini-embedding-001
 GEMINI_EMBEDDING_DIMENSIONS=1536
 GEMINI_EMBEDDING_INPUT_TOKEN_LIMIT=2048
@@ -268,7 +268,7 @@ POST /ask
 
 Search and RAG filters include `source`, `event_type`, `mime_type`, `start`, and `end`. Timeline history additionally supports `file_id`, `limit`, and `offset`.
 
-`SEMANTIC_MIN_SIMILARITY` defaults to `0.35`; semantic candidates below that cosine-similarity floor are rejected so unrelated memories are not treated as evidence. Provider order is Gemini, then OpenAI, then PostgreSQL lexical search and conservative extractive answers. If no generation provider is available, `/ask` returns an insufficient-evidence response when meaningful question terms are absent from the retrieved passages. Public search and citation payloads expose short excerpts and descriptive fields only; internal IDs, raw metadata, Drive URLs, full chunks, API keys, and model context are omitted from responses and logs.
+`SEMANTIC_MIN_SIMILARITY` defaults to `0.35`; semantic candidates below that cosine-similarity floor are rejected so unrelated memories are not treated as evidence. Provider order is Gemini, then OpenAI, then PostgreSQL lexical search and conservative extractive answers. If no generation provider is available, `/ask` returns an insufficient-evidence response when meaningful question terms are absent from the retrieved passages. Authenticated search and citation payloads expose short redacted excerpts and descriptive fields only. A source may include a server-validated `open_url` for the exact HTTPS hosts `drive.google.com` or `docs.google.com`; internal IDs, raw metadata, full chunks, API keys, and model context are omitted from responses and logs.
 
 ## Schema-aware natural `/ask` searches
 

@@ -35,7 +35,7 @@ URI. Production must use HTTPS.
 From `frontend`:
 
 ```powershell
-npm install
+npm ci
 npm run dev
 ```
 
@@ -110,7 +110,7 @@ metadata and internal record identifiers are not rendered.
 Sanitized file, source, timeline, and recent-activity objects may contain
 `open_url`. FastAPI returns it only for credential-free HTTPS URLs whose hostname
 is exactly `drive.google.com` or `docs.google.com`; the browser never constructs a
-Drive URL. Public excerpts and generated answers redact common phone numbers,
+Drive URL. API excerpts and generated answers redact common phone numbers,
 email addresses, and obvious credentials without changing stored content.
 
 The dashboard loads `GET /integrations/google-drive/status` and
