@@ -48,7 +48,6 @@ n8n-data/
 .n8n/
 
 # Generated project artifacts
-artifacts/
 uploads/
 tmp/
 temp/
