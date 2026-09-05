@@ -25,6 +25,13 @@ def vector(axis: int) -> list[float]:
     return result
 
 
+def cosine_vector(primary_axis: int, similarity: float, secondary_axis: int) -> list[float]:
+    result = [0.0] * 1536
+    result[primary_axis] = similarity
+    result[secondary_axis] = (1.0 - similarity * similarity) ** 0.5
+    return result
+
+
 class RetrievalEndToEndTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -339,6 +346,43 @@ class RetrievalEndToEndTests(unittest.TestCase):
         }
         print("FAKE_SEMANTIC_METRICS", metrics)
         self.assertEqual(metrics, {"hit_at_1": 1.0, "hit_at_3": 1.0, "mrr": 1.0})
+
+    def test_semantic_candidate_below_absolute_relevance_is_not_returned(self):
+        batch = EmbeddingBatch(
+            [cosine_vector(0, 0.70, 7)], EmbeddingSpec("fake", "fake-v1", 1536)
+        )
+        diagnostics = {}
+        with patch("app.services.retrieval.create_embedding_batch", return_value=batch):
+            results, mode = hybrid_search(
+                self.db, user_id=self.user_a, query_text="domestic companion resonance",
+                limit=3, source=self.source, diagnostics=diagnostics,
+            )
+        self.assertEqual(mode, "hybrid")
+        self.assertEqual(results, [])
+        self.assertGreater(diagnostics["candidate_count"], 0)
+        self.assertEqual(diagnostics["accepted_file_count"], 0)
+
+    def test_strong_lexical_match_outranks_loose_semantic_candidate(self):
+        batch = EmbeddingBatch(
+            [cosine_vector(1, 0.80, 7)], EmbeddingSpec("fake", "fake-v1", 1536)
+        )
+        with patch("app.services.retrieval.create_embedding_batch", return_value=batch):
+            results, _mode = hybrid_search(
+                self.db, user_id=self.user_a, query_text="Whiskers", limit=3,
+                source=self.source,
+            )
+        self.assertEqual(results[0]["title"], "Feline Care Guide")
+
+    def test_file_score_uses_bounded_supporting_passages(self):
+        with patch("app.services.retrieval.create_embedding_batch", side_effect=self.no_provider):
+            results, _mode = hybrid_search(
+                self.db, user_id=self.user_a, query_text="groupingmarker",
+                limit=10, source=self.source,
+            )
+        grouped = [result for result in results if result["title"] == "Multi Chunk Fixture"]
+        self.assertEqual(len(grouped), 2)
+        self.assertEqual(len({result["score"] for result in grouped}), 1)
+        self.assertLessEqual(grouped[0]["score"], 1.0)
 
     def test_semantic_query_does_not_mix_embedding_signatures(self):
         chunks = self.db.query(MemoryChunk).filter(MemoryChunk.memory_id == self.feline.id).all()
