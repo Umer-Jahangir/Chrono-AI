@@ -26,13 +26,24 @@ class Settings(BaseSettings):
     GEMINI_EMBEDDING_INPUT_TOKEN_LIMIT: int = 2048
     GEMINI_EMBEDDING_BATCH_TOKEN_LIMIT: int = 18000
     GEMINI_EMBEDDING_BATCH_SIZE: int = 20
-    GEMINI_TIMEOUT_SECONDS: int = 30
-    GEMINI_MAX_ATTEMPTS: int = 3
+    GEMINI_TIMEOUT_SECONDS: int = 15
+    GEMINI_MAX_ATTEMPTS: int = 2
+    GEMINI_GENERATION_BUDGET_SECONDS: int = 35
+    GEMINI_RETRY_INITIAL_DELAY_SECONDS: float = 0.5
+    GEMINI_RETRY_MAX_DELAY_SECONDS: float = 4.0
     CHUNK_SIZE_TOKENS: int = 700
     CHUNK_OVERLAP_TOKENS: int = 100
     RAG_TOP_K: int = 8
     SEMANTIC_MIN_SIMILARITY: float = 0.35
     LEXICAL_MIN_RANK: float = 0.01
+    # Vector top-K is candidate generation. These absolute gates decide what
+    # may enter RAG context or a public result.
+    RAG_MIN_SEMANTIC_CANDIDATE: float = 0.45
+    RAG_MIN_SEMANTIC_ONLY: float = 0.75
+    RAG_MIN_FINAL_RELEVANCE: float = 0.45
+    RAG_MIN_FILE_TERM_COVERAGE: float = 0.60
+    RAG_LEXICAL_RANK_SATURATION: float = 0.20
+    RAG_MAX_CHUNKS_PER_FILE: int = 2
 
     model_config = SettingsConfigDict(
         env_file=".env",
