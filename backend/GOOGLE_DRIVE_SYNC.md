@@ -187,8 +187,11 @@ GEMINI_EMBEDDING_DIMENSIONS=1536
 GEMINI_EMBEDDING_INPUT_TOKEN_LIMIT=2048
 GEMINI_EMBEDDING_BATCH_TOKEN_LIMIT=18000
 GEMINI_EMBEDDING_BATCH_SIZE=20
-GEMINI_TIMEOUT_SECONDS=30
-GEMINI_MAX_ATTEMPTS=3
+GEMINI_TIMEOUT_SECONDS=15
+GEMINI_MAX_ATTEMPTS=2
+GEMINI_GENERATION_BUDGET_SECONDS=35
+GEMINI_RETRY_INITIAL_DELAY_SECONDS=0.5
+GEMINI_RETRY_MAX_DELAY_SECONDS=4.0
 ```
 
 Chrono requests exactly 1536 dimensions for both document and query embeddings,
@@ -268,7 +271,7 @@ POST /ask
 
 Search and RAG filters include `source`, `event_type`, `mime_type`, `start`, and `end`. Timeline history additionally supports `file_id`, `limit`, and `offset`.
 
-`SEMANTIC_MIN_SIMILARITY` defaults to `0.35`; semantic candidates below that cosine-similarity floor are rejected so unrelated memories are not treated as evidence. Provider order is Gemini, then OpenAI, then PostgreSQL lexical search and conservative extractive answers. If no generation provider is available, `/ask` returns an insufficient-evidence response when meaningful question terms are absent from the retrieved passages. Authenticated search and citation payloads expose short redacted excerpts and descriptive fields only. A source may include a server-validated `open_url` for the exact HTTPS hosts `drive.google.com` or `docs.google.com`; internal IDs, raw metadata, full chunks, API keys, and model context are omitted from responses and logs.
+Vector top-K is candidate generation only. `RAG_MIN_SEMANTIC_CANDIDATE=0.45`, `RAG_MIN_SEMANTIC_ONLY=0.75`, `RAG_MIN_FINAL_RELEVANCE=0.45`, and `RAG_MIN_FILE_TERM_COVERAGE=0.60` provide absolute relevance gates before a passage can enter RAG context or a public result. Lexical evidence receives 70% of a hybrid passage score and semantic similarity 30%; semantic-only passages use 60% of cosine similarity and therefore need a genuinely strong vector match. A file is ranked by its best passage plus one bounded supporting-passage bonus, and at most `RAG_MAX_CHUNKS_PER_FILE=2` passages are retained. Provider order is Gemini, then OpenAI, then PostgreSQL lexical search and conservative extractive answers. If no generation provider is available, `/ask` returns an insufficient-evidence response when meaningful question terms are absent from the retrieved passages. Authenticated search and citation payloads expose short redacted excerpts and descriptive fields only. A source may include a server-validated `open_url` for the exact HTTPS hosts `drive.google.com` or `docs.google.com`; internal IDs, raw metadata, full chunks, API keys, and model context are omitted from responses and logs.
 
 ## Schema-aware natural `/ask` searches
 
