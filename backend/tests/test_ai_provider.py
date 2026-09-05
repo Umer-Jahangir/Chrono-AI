@@ -59,6 +59,7 @@ class GeminiProviderTests(unittest.TestCase):
         openai_answer.assert_not_called()
         call = model_api.generate_content.call_args
         self.assertEqual(call.kwargs["model"], "gemini-test-chat")
+        self.assertTrue(call.kwargs["config"].automatic_function_calling.disable)
         self.assertNotIn("test-key", repr(call))
 
     def test_provider_outage_falls_back_to_openai_with_actual_signature(self):
@@ -87,7 +88,7 @@ class GeminiProviderTests(unittest.TestCase):
         self.assertEqual(answer, "Fallback answer [1]")
         fallback.assert_called_once()
 
-    def test_gemini_client_has_bounded_retry_429_and_timeout(self):
+    def test_gemini_client_uses_single_sdk_attempt_and_bounded_timeout(self):
         with (
             patch.object(settings, "GEMINI_API_KEY", "test-key"),
             patch.object(settings, "GEMINI_TIMEOUT_SECONDS", 17),
@@ -97,9 +98,40 @@ class GeminiProviderTests(unittest.TestCase):
             ai_provider.get_gemini_client.cache_clear()
             ai_provider.get_gemini_client()
         options = client_class.call_args.kwargs["http_options"]
-        self.assertEqual(options.timeout, 17000)
-        self.assertEqual(options.retry_options.attempts, 3)
+        self.assertEqual(options.timeout, 15000)
+        self.assertEqual(options.retry_options.attempts, 1)
         self.assertIn(429, options.retry_options.http_status_codes)
+
+    def test_transient_generation_errors_retry_at_most_twice(self):
+        transient = RuntimeError("redacted")
+        transient.status_code = 503
+        with (
+            patch.object(settings, "GEMINI_API_KEY", "test-key"),
+            patch.object(settings, "GEMINI_CHAT_MODEL", "gemini-test-chat"),
+            patch.object(settings, "OPENAI_API_KEY", ""),
+            patch.object(settings, "GEMINI_MAX_ATTEMPTS", 2),
+            patch("app.services.ai_provider._gemini_answer", side_effect=transient) as generate,
+            patch("app.services.ai_provider.time.sleep"),
+            patch("app.services.ai_provider.random.uniform", return_value=0),
+        ):
+            with self.assertRaises(ai_provider.AIProviderUnavailable):
+                ai_provider.answer_with_context("Question?", "[1] Safe fixture")
+        self.assertEqual(generate.call_count, 2)
+
+    def test_permanent_generation_errors_are_not_retried(self):
+        for status_code in (400, 401, 403, 404):
+            permanent = RuntimeError("redacted")
+            permanent.status_code = status_code
+            with self.subTest(status_code=status_code):
+                with (
+                    patch.object(settings, "GEMINI_API_KEY", "test-key"),
+                    patch.object(settings, "GEMINI_CHAT_MODEL", "gemini-test-chat"),
+                    patch.object(settings, "OPENAI_API_KEY", ""),
+                    patch("app.services.ai_provider._gemini_answer", side_effect=permanent) as generate,
+                ):
+                    with self.assertRaises(ai_provider.AIProviderUnavailable):
+                        ai_provider.answer_with_context("Question?", "[1] Safe fixture")
+                    self.assertEqual(generate.call_count, 1)
 
 
 @unittest.skipUnless(settings.GEMINI_API_KEY, "GEMINI_API_KEY is not configured")
