@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import SearchPage from '../pages/SearchPage';
 import TimelinePage from '../pages/TimelinePage';
-import { CHRONO_TOKEN_KEY } from '../lib/apiClient';
+import { CHRONO_TOKEN_KEY, chronoApi } from '../lib/apiClient';
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -73,6 +73,31 @@ describe('authenticated search workspace', () => {
     await user.click(screen.getByRole('button', { name: 'Search' }));
     expect(await screen.findByText('Unable to reach Chrono. Check your connection and retry.')).toBeVisible();
     expect(screen.getByRole('button', { name: 'Retry' })).toBeVisible();
+  });
+
+  it('uses a 60-second /ask timeout and removes caller abort listeners', async () => {
+    const timeoutSpy = vi.spyOn(window, 'setTimeout');
+    const controller = new AbortController();
+    const removeSpy = vi.spyOn(controller.signal, 'removeEventListener');
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(jsonResponse(emptyAsk))));
+    await chronoApi.ask('Show my PDFs', { signal: controller.signal });
+    expect(timeoutSpy).toHaveBeenCalledWith(expect.any(Function), 60000);
+    expect(removeSpy).toHaveBeenCalledWith('abort', expect.any(Function));
+  });
+
+  it('renders a genuine /ask timeout as retryable', async () => {
+    const realSetTimeout = window.setTimeout.bind(window);
+    vi.spyOn(window, 'setTimeout').mockImplementation((callback, delay) => {
+      return realSetTimeout(callback, delay === 60000 ? 0 : delay);
+    });
+    vi.stubGlobal('fetch', vi.fn((_url, options) => new Promise((_resolve, reject) => {
+      options.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+    })));
+    render(<MemoryRouter><SearchPage /></MemoryRouter>);
+    fireEvent.change(screen.getByLabelText('Ask Chrono about your files and timeline'), { target: { value: 'Show my PDFs' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    expect(await screen.findByText('Chrono took too long to respond. Please retry.')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled();
   });
 });
 
