@@ -134,7 +134,7 @@ export default function SearchPage() {
                 <h2 className="font-semibold text-on-error-container">Search could not be completed</h2>
                 <p className="mt-1 text-sm text-on-error-container">{error.message}</p>
                 {error.retryable && lastQuestion && (
-                  <button type="button" onClick={() => runSearch(lastQuestion)} className="mt-4 px-4 py-2 rounded-lg bg-white border border-error/20 text-on-error-container hover:bg-error-container">Retry</button>
+                  <button type="button" disabled={isLoading} onClick={() => runSearch(lastQuestion)} className="mt-4 px-4 py-2 rounded-lg bg-white border border-error/20 text-on-error-container hover:bg-error-container disabled:opacity-50">Retry</button>
                 )}
               </div>
             )}
