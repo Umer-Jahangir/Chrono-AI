@@ -23,6 +23,18 @@ describe('/ask result rendering', () => {
     expect(screen.getByText('Whiskers purrs and needs 55 grams of food.')).toBeVisible();
   });
 
+  it('renders a cited lexical-extractive fallback honestly', () => {
+    render(<AskResults response={{
+      ...base,
+      intent: 'content_question',
+      retrieval_mode: 'lexical-extractive',
+      answer: 'The most relevant Chrono memory passage is [1].',
+      sources: [{ citation: 1, title: 'Evidence.txt', excerpt: 'Supported evidence.', event_date: '2026-08-29T10:00:00Z' }],
+    }} />);
+    expect(screen.getByText('lexical-extractive')).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Evidence.txt' })).toBeVisible();
+  });
+
   it('renders structured file discovery fields without raw metadata', () => {
     render(<AskResults response={{
       ...base,
@@ -131,6 +143,20 @@ describe('/ask result rendering', () => {
     expect(screen.getAllByRole('link')).toHaveLength(2);
   });
 
+  it('does not render unsafe or lookalike Drive URLs as links', () => {
+    render(<AskResults response={{
+      ...base,
+      intent: 'file_discovery',
+      answer: 'Chrono found 2 items.',
+      items: [
+        { title: 'Unsafe.pdf', source: 'google_drive', item_type: 'file', open_url: 'javascript:alert(1)' },
+        { title: 'Lookalike.pdf', source: 'google_drive', item_type: 'file', open_url: 'https://drive.google.com.evil.test/file' },
+      ],
+    }} />);
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Unsafe.pdf' }).querySelector('a')).toBeNull();
+  });
+
   it('groups multiple cited passages beneath one linked source document', () => {
     const safeUrl = 'https://docs.google.com/document/d/fixture/edit';
     render(<AskResults response={{
@@ -151,5 +177,40 @@ describe('/ask result rendering', () => {
     expect(screen.getByText('Second [REDACTED PHONE] passage.')).toBeVisible();
     expect(screen.getByRole('link', { name: 'Grouped Source' })).toHaveAttribute('href', safeUrl);
     expect(screen.queryByText(/fixture@example/i)).not.toBeInTheDocument();
+  });
+
+  it('renders only finalized sources without orphan citation labels', () => {
+    render(<AskResults response={{
+      ...base,
+      intent: 'content_question',
+      retrieval_mode: 'hybrid',
+      answer: 'Python and Django [1]; computer vision [2].',
+      sources: [{
+        citation: 1, title: 'Resume.pdf', event_date: '2026-08-29T10:00:00Z',
+        passages: [
+          { citation: 1, excerpt: 'Python and Django.' },
+          { citation: 2, excerpt: 'Computer vision.' },
+        ],
+      }],
+    }} />);
+    expect(screen.getByText('1 document')).toBeVisible();
+    expect(screen.getByText(/Citation \[1\]/)).toBeVisible();
+    expect(screen.getByText(/Citation \[2\]/)).toBeVisible();
+    expect(screen.queryByText(/\[3\]|\[4\]/)).not.toBeInTheDocument();
+    expect(screen.queryByText('fyp.txt')).not.toBeInTheDocument();
+  });
+
+  it('renders every finalized group for a genuinely multi-document answer', () => {
+    render(<AskResults response={{
+      ...base,
+      intent: 'content_question', retrieval_mode: 'hybrid', answer: 'Two facts [1] [2].',
+      sources: [
+        { citation: 1, title: 'First.pdf', excerpt: 'First fact.', event_date: '2026-08-29T10:00:00Z' },
+        { citation: 2, title: 'Second.pdf', excerpt: 'Second fact.', event_date: '2026-08-30T10:00:00Z' },
+      ],
+    }} />);
+    expect(screen.getByText('2 documents')).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'First.pdf' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Second.pdf' })).toBeVisible();
   });
 });
