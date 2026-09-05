@@ -125,6 +125,7 @@ export const chronoApi = Object.freeze({
   ask: (question, options = {}) => apiRequest('/ask', {
     method: 'POST',
     body: { question, limit: 10 },
+    timeoutMs: 60000,
     ...options,
   }),
   timeline: (history = false, options = {}) => apiRequest(
