@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 from app.core.config import settings
 from app.schemas.rag import SearchPlan
 from app.services.ai_provider import get_gemini_client
+from app.services.file_types import detect_file_type
 
 
 _MONTH_PATTERN = (
@@ -14,6 +15,27 @@ _MONTH_PATTERN = (
 _ISO_PATTERN = r"\d{4}-\d{2}-\d{2}"
 _DATE_PATTERN = rf"(?:{_MONTH_PATTERN}|{_ISO_PATTERN})"
 _EMAIL_PATTERN = re.compile(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}")
+_TOPIC_STOPWORDS = {
+    "a", "an", "and", "about", "by", "created", "document", "documents",
+    "file", "files", "find", "for", "give", "google", "have", "i", "in",
+    "me", "modified", "my", "of", "on", "only", "owned", "related", "show",
+    "the", "to", "with", "pdf", "pdfs", "txt", "text", "csv", "json",
+    "markdown", "word", "excel", "powerpoint", "image", "images", "audio",
+    "video", "spreadsheet", "spreadsheets", "presentation", "presentations",
+    "folder", "folders", "today", "yesterday", "week", "month", "last", "this",
+    "current", "from", "between", "received", "trashed", "restored", "deleted",
+    "moved", "sent", "shared", "mentions", "mention", "which", "january",
+    "february", "march", "april", "may", "june", "july",
+    "august", "september", "october", "november", "december",
+}
+
+
+def topical_terms(question: str) -> list[str]:
+    without_dates = re.sub(_DATE_PATTERN, " ", _EMAIL_PATTERN.sub(" ", question), flags=re.IGNORECASE)
+    return [
+        token for token in re.findall(r"[A-Za-z0-9_'-]+", without_dates.casefold())
+        if len(token) > 1 and token not in _TOPIC_STOPWORDS
+    ][:20]
 
 
 def _local_now(now: datetime | None = None) -> datetime:
@@ -157,11 +179,13 @@ def deterministic_plan(
     filename = _filename(question)
     role, person_name, person_email = _person_filter(question)
 
-    mime_type = None
-    if re.search(r"\bpdfs?\b", lowered):
-        mime_type = "application/pdf"
-    elif re.search(r"\bgoogle (?:docs?|documents?)\b", lowered):
-        mime_type = "application/vnd.google-apps.document"
+    discovery_command = bool(re.search(r"\b(?:show|find|give(?:\s+me)?|list)\b", lowered))
+    content_search_phrase = any(
+        phrase in lowered for phrase in ("which document", "find documents", "documents about", "mentions")
+    )
+    file_type = detect_file_type(question) if discovery_command or re.search(r"\b(?:how many|count)\b", lowered) else None
+    mime_type = file_type.mime_types[0] if file_type and len(file_type.mime_types) == 1 else None
+    mime_types = list(file_type.mime_types) if file_type and len(file_type.mime_types) > 1 else []
 
     item_type = "folder" if re.search(r"\bfolders?\b", lowered) else None
     if item_type is None and re.search(r"\bfiles?\b", lowered):
@@ -182,6 +206,7 @@ def deterministic_plan(
             term in lowered for term in ("drive", "file", "folder", "pdf", "owned", "shared", "sent")
         ) else None,
         "mime_type": mime_type,
+        "mime_types": mime_types,
         "item_type": item_type,
         "title": title,
         "filename": filename,
@@ -211,13 +236,32 @@ def deterministic_plan(
         return SearchPlan(intent="event_history", event_type="deleted", date_field=date_field or "occurred_at", **{k: v for k, v in base.items() if k != "date_field"})
     if "latest" in lowered and ("drive" in lowered or "activity" in lowered):
         return SearchPlan(intent="current_timeline", **base)
-    if role or item_type or mime_type or filename or trashed is not None or (
-        re.search(r"\b(?:show|find|give me)\b", lowered) and "document" not in lowered
-    ):
+    topics = topical_terms(question) if discovery_command else []
+    if person_name:
+        person_tokens = set(re.findall(r"\w+", person_name.casefold()))
+        topics = [term for term in topics if term not in person_tokens]
+    if filename:
+        filename_tokens = set(re.findall(r"\w+", filename.casefold()))
+        topics = [term for term in topics if term not in filename_tokens]
+    if title:
+        topics = []
+    if content_search_phrase:
+        search_terms = topical_terms(question)
+        if not search_terms:
+            return SearchPlan(
+                intent="unsupported", query_text=None, limit=base["limit"],
+                unsupported_reason="Chrono could not identify a safe search topic.",
+            )
+        return SearchPlan(intent="content_search", query_text=" ".join(search_terms), **{
+            key: value for key, value in base.items() if key != "query_text"
+        })
+    if topics:
+        return SearchPlan(intent="content_search", query_text=" ".join(topics), **{
+            key: value for key, value in base.items() if key != "query_text"
+        })
+    if role or item_type or file_type or filename or trashed is not None or discovery_command:
         structured_event = event_type if event_type not in {"created", "modified"} else None
         return SearchPlan(intent="file_discovery", event_type=structured_event, **base)
-    if any(phrase in lowered for phrase in ("which document", "find documents", "documents about", "mentions")):
-        return SearchPlan(intent="content_search", **base)
     if lowered.endswith("?") or any(
         lowered.startswith(prefix) for prefix in ("what ", "does ", "do ", "summarize ", "explain ")
     ):
@@ -245,6 +289,7 @@ def _gemini_plan(question: str, *, limit: int, now: datetime | None = None) -> S
             response_mime_type="application/json",
             response_schema=SearchPlan,
             temperature=0,
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         ),
     )
     parsed = response.parsed
@@ -269,7 +314,24 @@ def plan_search(question: str, *, limit: int, now: datetime | None = None) -> Se
     if deterministic is not None:
         return deterministic
     try:
-        return _gemini_plan(question, limit=limit, now=now)
+        plan = _gemini_plan(question, limit=limit, now=now)
+        if plan.intent == "file_discovery":
+            terms = topical_terms(question)
+            if terms and not (plan.title or plan.filename):
+                return plan.model_copy(update={
+                    "intent": "content_search", "query_text": " ".join(terms)
+                })
+            has_filter = any((
+                plan.source, plan.event_type, plan.mime_type, plan.mime_types,
+                plan.item_type, plan.title, plan.filename, plan.trashed is not None,
+                plan.person_role, plan.start, plan.end,
+            ))
+            if not has_filter:
+                return SearchPlan(
+                    intent="unsupported", limit=min(max(limit, 1), 50),
+                    unsupported_reason="Chrono could not validate a safe search filter.",
+                )
+        return plan
     except Exception:
         return SearchPlan(
             intent="content_question",
