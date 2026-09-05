@@ -11,6 +11,7 @@ from app.services.metadata_normalizer import (
     normalize_memory,
     person_matches,
 )
+from app.services.file_types import normalize_mime_type
 
 
 @dataclass(frozen=True)
@@ -25,11 +26,11 @@ class StructuredExecution:
 def interpreted_filters(plan: SearchPlan) -> dict:
     result = {}
     for field_name in (
-        "source", "event_type", "mime_type", "item_type", "title", "filename",
+        "source", "event_type", "mime_type", "mime_types", "item_type", "title", "filename",
         "trashed", "person_name", "person_role", "date_field", "aggregate", "start", "end",
     ):
         value = getattr(plan, field_name)
-        if value is not None:
+        if value not in (None, []):
             result[field_name] = value.isoformat() if isinstance(value, datetime) else value
     if plan.person_email:
         result["person_email_provided"] = True
@@ -74,18 +75,24 @@ def _role_supported(rows: list[NormalizedDriveMetadata], plan: SearchPlan) -> tu
     return True, None
 
 
-def _matches(metadata: NormalizedDriveMetadata, plan: SearchPlan) -> bool:
+def matches_plan(metadata: NormalizedDriveMetadata, plan: SearchPlan) -> bool:
     if plan.source and metadata.source != plan.source:
         return False
     if plan.event_type and metadata.event_type != plan.event_type:
         return False
-    if plan.mime_type and metadata.mime_type != plan.mime_type:
+    normalized_mime = normalize_mime_type(metadata.mime_type or "")
+    allowed_mimes = {normalize_mime_type(value) for value in plan.mime_types}
+    if plan.mime_type and normalized_mime != normalize_mime_type(plan.mime_type):
+        return False
+    if allowed_mimes and normalized_mime not in allowed_mimes:
         return False
     if plan.item_type == "folder" and not metadata.is_folder:
         return False
     if plan.item_type == "file" and metadata.is_folder:
         return False
     if plan.trashed is not None and metadata.trashed != plan.trashed:
+        return False
+    if plan.trashed is None and plan.intent in {"file_discovery", "content_search", "aggregate"} and metadata.trashed:
         return False
     title_filter = plan.filename or plan.title
     if title_filter and title_filter.casefold() not in metadata.title.casefold():
@@ -194,7 +201,7 @@ def execute_structured_search(
     if not supported:
         return _unsupported(plan, reason or "Chrono does not have the required metadata.")
 
-    matched = [(row, metadata) for row, metadata in rows if _matches(metadata, plan)]
+    matched = [(row, metadata) for row, metadata in rows if matches_plan(metadata, plan)]
     if plan.intent == "aggregate":
         if use_events:
             count = len(matched)
