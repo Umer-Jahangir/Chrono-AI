@@ -140,7 +140,7 @@ class PublicOutputAndDashboardTests(unittest.TestCase):
             self.assertIsNone(items[title]["open_url"])
         self.assertNotIn("Other User Private Link.pdf", items)
 
-    def test_rag_sources_group_passages_redact_and_preserve_storage(self):
+    def test_rag_sources_keep_only_cited_passages_redact_and_preserve_storage(self):
         original = self.memory.content
         with (
             patch("app.services.retrieval.create_embedding_batch", side_effect=AIProviderNotConfigured("disabled")),
@@ -154,7 +154,7 @@ class PublicOutputAndDashboardTests(unittest.TestCase):
         body = response.json()
         self.assertEqual(body["sources"][0]["open_url"], self.safe_url)
         self.assertEqual(len(body["sources"]), 1)
-        self.assertEqual(len(body["sources"][0]["passages"]), 2)
+        self.assertEqual(len(body["sources"][0]["passages"]), 1)
         serialized = str(body)
         self.assertNotIn("owner@example.invalid", serialized)
         self.assertNotIn("555-0198", serialized)
