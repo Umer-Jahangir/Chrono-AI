@@ -4,7 +4,9 @@ import unittest
 from unittest.mock import patch
 
 from app.core.config import settings
+from app.schemas.rag import SearchPlan
 from app.services.query_planner import deterministic_plan, plan_search
+from app.services.file_types import detect_file_type
 
 
 class QueryPlannerTests(unittest.TestCase):
@@ -44,6 +46,23 @@ class QueryPlannerTests(unittest.TestCase):
         self.assertEqual(deterministic_plan("Show files modified by Ali", limit=8).person_role, "last_modifier")
         self.assertEqual(deterministic_plan("What changes did Ali perform yesterday?", limit=8).person_role, "activity_actor")
 
+    def test_central_file_type_allowlist_handles_product_and_plural_variations(self):
+        cases = {
+            "PDFs": "pdf", "TXT files": "text", "CSV": "csv", "JSON files": "json",
+            "Markdown documents": "markdown", "Microsoft Word files": "word",
+            "Google Docs": "google_docs", "Excel spreadsheets": "excel",
+            "Google Sheets": "google_sheets", "PowerPoint": "powerpoint",
+            "Google Slides": "google_slides", "images": "image", "audio": "audio",
+            "videos": "video",
+        }
+        for phrase, expected in cases.items():
+            with self.subTest(phrase=phrase):
+                self.assertEqual(detect_file_type(f"Show {phrase}").key, expected)
+
+    def test_unknown_mime_is_rejected_by_plan_schema(self):
+        with self.assertRaises(ValueError):
+            SearchPlan(intent="file_discovery", mime_type="application/x-private")
+
     def test_invalid_gemini_plan_is_rejected(self):
         response = SimpleNamespace(parsed={"intent": "file_discovery", "sql": "unsafe", "limit": 500})
         client = SimpleNamespace(models=SimpleNamespace(generate_content=lambda **_kwargs: response))
@@ -64,6 +83,16 @@ class QueryPlannerTests(unittest.TestCase):
         ):
             plan = plan_search("ambiguous long request requiring safe fallback behavior", limit=8)
         self.assertEqual(plan.intent, "content_question")
+
+    def test_empty_model_discovery_plan_fails_closed(self):
+        with (
+            patch("app.services.query_planner.deterministic_plan", return_value=None),
+            patch("app.services.query_planner._gemini_plan", return_value=SearchPlan(
+                intent="file_discovery", limit=8
+            )),
+        ):
+            plan = plan_search("files", limit=8)
+        self.assertEqual(plan.intent, "unsupported")
 
 
 if __name__ == "__main__":
