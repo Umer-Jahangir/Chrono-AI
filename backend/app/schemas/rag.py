@@ -2,7 +2,9 @@ from datetime import datetime
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.services.file_types import is_allowed_mime_type, normalize_mime_type
 
 
 class SearchPlan(BaseModel):
@@ -21,6 +23,7 @@ class SearchPlan(BaseModel):
     source: str | None = None
     event_type: str | None = None
     mime_type: str | None = None
+    mime_types: list[str] = Field(default_factory=list, max_length=24)
     item_type: Literal["file", "folder"] | None = None
     title: str | None = None
     filename: str | None = None
@@ -44,6 +47,40 @@ class SearchPlan(BaseModel):
     limit: int = Field(default=10, ge=1, le=50)
     unsupported_reason: str | None = None
 
+    @field_validator("mime_type")
+    @classmethod
+    def validate_mime_type(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = normalize_mime_type(value)
+        if not is_allowed_mime_type(normalized):
+            raise ValueError("Unsupported MIME type")
+        return normalized
+
+    @field_validator("mime_types")
+    @classmethod
+    def validate_mime_types(cls, values: list[str]) -> list[str]:
+        normalized = list(dict.fromkeys(normalize_mime_type(value) for value in values))
+        if any(not is_allowed_mime_type(value) for value in normalized):
+            raise ValueError("Unsupported MIME type")
+        return normalized
+
+    @field_validator("source")
+    @classmethod
+    def validate_source(cls, value: str | None) -> str | None:
+        if value is not None and (len(value) > 100 or not value.replace("_", "").replace("-", "").isalnum()):
+            raise ValueError("Invalid source")
+        return value
+
+    @field_validator("event_type")
+    @classmethod
+    def validate_event_type(cls, value: str | None) -> str | None:
+        if value is not None and value not in {
+            "created", "modified", "moved", "trashed", "restored", "deleted"
+        }:
+            raise ValueError("Unsupported event type")
+        return value
+
 
 class AskRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -55,6 +92,32 @@ class AskRequest(BaseModel):
     mime_type: str | None = None
     start: datetime | None = None
     end: datetime | None = None
+
+    @field_validator("mime_type")
+    @classmethod
+    def validate_mime_type(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = normalize_mime_type(value)
+        if not is_allowed_mime_type(normalized):
+            raise ValueError("Unsupported MIME type")
+        return normalized
+
+    @field_validator("source")
+    @classmethod
+    def validate_source(cls, value: str | None) -> str | None:
+        if value is not None and (len(value) > 100 or not value.replace("_", "").replace("-", "").isalnum()):
+            raise ValueError("Invalid source")
+        return value
+
+    @field_validator("event_type")
+    @classmethod
+    def validate_event_type(cls, value: str | None) -> str | None:
+        if value is not None and value not in {
+            "created", "modified", "moved", "trashed", "restored", "deleted"
+        }:
+            raise ValueError("Unsupported event type")
+        return value
 
 
 class AskSource(BaseModel):
